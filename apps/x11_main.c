@@ -90,6 +90,11 @@ static char copyutf8[1024 * 48] = "";
 static Time copytime;
 static char *filename;
 
+#define FONTNAME "6x13"
+static XFontStruct *font;
+static int fdescent;
+static int fheight;
+
 static pdfapp_t gapp;
 static int closing = 0;
 static int reloading = 0;
@@ -218,6 +223,12 @@ static void winopen(void)
 	mapped = 0;
 
 	xgc = XCreateGC(xdpy, xwin, 0, NULL);
+
+	if ((font = XLoadQueryFont(xdpy, FONTNAME)) == NULL)
+		winerror(&gapp, "cannot load font: " FONTNAME);
+	XSetFont(xdpy, xgc, font->fid);
+	fdescent = font->descent + 1;
+	fheight = font->ascent + fdescent;
 
 	XDefineCursor(xdpy, xwin, xcarrow);
 
@@ -413,11 +424,11 @@ static void winblitsearch(pdfapp_t *app)
 {
 	if (gapp.isediting)
 	{
-		char buf[sizeof(gapp.search) + 50];
-		sprintf(buf, "Search: %s", gapp.search);
-		XSetForeground(xdpy, xgc, WhitePixel(xdpy, xscr));
-		fillrect(0, 0, gapp.winw, 30);
-		windrawstring(&gapp, 10, 20, buf);
+		char buf[sizeof(gapp.search) + 10];
+		snprintf(buf, sizeof(buf), "%c%s", gapp.searchdir < 0 ? '?' : '/', gapp.search);
+		XSetForeground(xdpy, xgc, BlackPixel(xdpy, xscr));
+		fillrect(0, gapp.winh - fheight, gapp.winw, fheight);
+		windrawstring(&gapp, 2, gapp.winh - fdescent, buf);
 	}
 }
 
@@ -545,7 +556,7 @@ void windrawstringxor(pdfapp_t *app, int x, int y, char *s)
 
 void windrawstring(pdfapp_t *app, int x, int y, char *s)
 {
-	XSetForeground(xdpy, xgc, BlackPixel(xdpy, DefaultScreen(xdpy)));
+	XSetForeground(xdpy, xgc, WhitePixel(xdpy, DefaultScreen(xdpy)));
 	XDrawString(xdpy, xwin, xgc, x, y, s, strlen(s));
 }
 
