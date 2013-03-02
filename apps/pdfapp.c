@@ -853,7 +853,7 @@ void pdfapp_inverthit(pdfapp_t *app)
 	}
 }
 
-static int match(char *s, fz_text_page *page, int n)
+static int match(char *s, fz_text_page *page, int n, int icase)
 {
 	int orig = n;
 	int c;
@@ -866,8 +866,16 @@ static int match(char *s, fz_text_page *page, int n)
 		}
 		else
 		{
-			if (tolower(c) != tolower(charat(page, n)))
-				return 0;
+			if (icase)
+			{
+				if (tolower(c) != tolower(charat(page, n)))
+					return 0;
+			}
+			else
+			{
+				if (c != charat(page, n))
+					return 0;
+			}
 			n++;
 		}
 	}
@@ -895,7 +903,7 @@ static void pdfapp_searchforward(pdfapp_t *app, enum panning *panto)
 
 		while (test < len)
 		{
-			matchlen = match(app->search, app->page_text, test);
+			matchlen = match(app->search, app->page_text, test, app->ignorecase);
 			if (matchlen)
 			{
 				wincursor(app, HAND);
@@ -934,7 +942,7 @@ static void pdfapp_searchbackward(pdfapp_t *app, enum panning *panto)
 
 		while (test >= 0)
 		{
-			matchlen = match(app->search, app->page_text, test);
+			matchlen = match(app->search, app->page_text, test, app->ignorecase);
 			if (matchlen)
 			{
 				wincursor(app, HAND);
@@ -965,7 +973,7 @@ static void pdfapp_find_hits(pdfapp_t *app)
 	
 	while (test < len)
 	{
-		matchlen = match(app->search, app->page_text, test);
+		matchlen = match(app->search, app->page_text, test, app->ignorecase);
 		if (matchlen)
 		{
 			if (app->hits.cnt == app->hits.cap)
@@ -995,6 +1003,7 @@ void pdfapp_onresize(pdfapp_t *app, int w, int h)
 
 void pdfapp_onkey(pdfapp_t *app, int c)
 {
+	int i;
 	int oldpage = app->pageno;
 	enum panning panto = PAN_TO_TOP;
 	int loadpage = 1;
@@ -1018,6 +1027,16 @@ void pdfapp_onkey(pdfapp_t *app, int c)
 			else if (c == '\n' || c == '\r')
 			{
 				app->isediting = 0;
+				app->ignorecase = 1;
+				for (i = 0; i < n; i++)
+				{
+					if (isupper(app->search[i]))
+					{
+						app->ignorecase = 0;
+						break;
+					}
+				}
+
 				pdfapp_find_hits(app);
 				if (app->hits.cnt == 0)
 				{

@@ -121,6 +121,7 @@ struct pdfapp_s
 	/* search state */
 	int isediting;
 	int searchdir;
+	int ignorecase;
 	char search[512];
 	struct
 	{
