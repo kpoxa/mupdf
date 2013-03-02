@@ -42,6 +42,12 @@ extern void winprint(pdfapp_t *);
 extern void winadvancetimer(pdfapp_t *, float duration);
 extern void winreplacefile(char *source, char *target);
 
+struct pdfapp_hit_s
+{
+	int i;
+	int len;
+};
+
 struct pdfapp_s
 {
 	/* current document params */
@@ -116,8 +122,12 @@ struct pdfapp_s
 	int isediting;
 	int searchdir;
 	char search[512];
-	int hit;
-	int hitlen;
+	struct
+	{
+		int cap;
+		int cnt;
+		struct pdfapp_hit_s *h;
+	} hits;
 
 	/* client context storage */
 	void *userdata;

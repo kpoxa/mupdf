@@ -24,6 +24,7 @@ enum panning
 
 static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repaint, int transition);
 static void pdfapp_updatepage(pdfapp_t *app);
+static void pdfapp_find_hits(pdfapp_t *app);
 
 static void pdfapp_warn(pdfapp_t *app, const char *fmt, ...)
 {
@@ -96,6 +97,10 @@ void pdfapp_init(fz_context *ctx, pdfapp_t *app)
 #else
 	app->colorspace = fz_device_rgb;
 #endif
+	app->search[0] = '\0';
+	app->hits.cap = 16;
+	app->hits.cnt = 0;
+	app->hits.h = fz_malloc_array(app->ctx, app->hits.cap, sizeof(*app->hits.h));
 }
 
 void pdfapp_invert(pdfapp_t *app, const fz_rect *rect)
@@ -610,10 +615,6 @@ static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repai
 	{
 		pdfapp_loadpage(app);
 
-		/* Zero search hit position */
-		app->hit = -1;
-		app->hitlen = 0;
-
 		/* Extract text */
 		app->page_sheet = fz_new_text_sheet(app->ctx);
 		app->page_text = fz_new_text_page(app->ctx, &app->page_bbox);
@@ -627,6 +628,8 @@ static void pdfapp_showpage(pdfapp_t *app, int loadpage, int drawpage, int repai
 				fz_run_display_list(app->annotations_list, tdev, &fz_identity, &fz_infinite_rect, &cookie);
 			fz_free_device(tdev);
 		}
+
+		pdfapp_find_hits(app);
 	}
 
 	if (drawpage)
@@ -820,31 +823,34 @@ void pdfapp_inverthit(pdfapp_t *app)
 {
 	fz_rect hitbox, bbox;
 	fz_matrix ctm;
-	int i;
+	int i, h;
 
-	if (app->hit < 0)
+	if (app->hits.cnt == 0)
 		return;
 
-	hitbox = fz_empty_rect;
-	pdfapp_viewctm(&ctm, app);
-
-	for (i = app->hit; i < app->hit + app->hitlen; i++)
+	for (h = 0; h < app->hits.cnt; h++)
 	{
-		bbox = bboxcharat(app->page_text, i);
-		if (fz_is_empty_rect(&bbox))
-		{
-			if (!fz_is_empty_rect(&hitbox))
-				pdfapp_invert(app, fz_transform_rect(&hitbox, &ctm));
-			hitbox = fz_empty_rect;
-		}
-		else
-		{
-			fz_union_rect(&hitbox, &bbox);
-		}
-	}
+		hitbox = fz_empty_rect;
+		pdfapp_viewctm(&ctm, app);
 
-	if (!fz_is_empty_rect(&hitbox))
-		pdfapp_invert(app, fz_transform_rect(&hitbox, &ctm));
+		for (i = app->hits.h[h].i; i < app->hits.h[h].i + app->hits.h[h].len; i++)
+		{
+			bbox = bboxcharat(app->page_text, i);
+			if (fz_is_empty_rect(&bbox))
+			{
+				if (!fz_is_empty_rect(&hitbox))
+					pdfapp_invert(app, fz_transform_rect(&hitbox, &ctm));
+				hitbox = fz_empty_rect;
+			}
+			else
+			{
+				fz_union_rect(&hitbox, &bbox);
+			}
+		}
+
+		if (!fz_is_empty_rect(&hitbox))
+			pdfapp_invert(app, fz_transform_rect(&hitbox, &ctm));
+	}
 }
 
 static int match(char *s, fz_text_page *page, int n)
@@ -881,38 +887,25 @@ static void pdfapp_searchforward(pdfapp_t *app, enum panning *panto)
 
 	do
 	{
-		len = textlen(app->page_text);
+		app->pageno = app->pageno == app->pagecount ? 1 : app->pageno + 1;
 
-		if (app->hit >= 0)
-			test = app->hit + strlen(app->search);
-		else
-			test = 0;
+		pdfapp_showpage(app, 1, 0, 0, 0);
+		len = textlen(app->page_text);
+		test = 0;
 
 		while (test < len)
 		{
 			matchlen = match(app->search, app->page_text, test);
 			if (matchlen)
 			{
-				app->hit = test;
-				app->hitlen = matchlen;
 				wincursor(app, HAND);
 				winrepaint(app);
 				return;
 			}
 			test++;
 		}
-
-		app->pageno++;
-		if (app->pageno > app->pagecount)
-			app->pageno = 1;
-
-		pdfapp_showpage(app, 1, 0, 0, 0);
-		*panto = PAN_TO_TOP;
-
 	} while (app->pageno != startpage);
 
-	if (app->pageno == startpage)
-		pdfapp_warn(app, "String '%s' not found.", app->search);
 	winrepaint(app);
 	wincursor(app, HAND);
 }
@@ -924,47 +917,69 @@ static void pdfapp_searchbackward(pdfapp_t *app, enum panning *panto)
 	int len;
 	int startpage;
 
+	if (app->search[0] == '\0')
+		return;
+
 	wincursor(app, WAIT);
 
 	startpage = app->pageno;
 
 	do
 	{
-		len = textlen(app->page_text);
+		app->pageno = app->pageno == 1 ? app->pagecount : app->pageno - 1;
 
-		if (app->hit >= 0)
-			test = app->hit - 1;
-		else
-			test = len;
+		pdfapp_showpage(app, 1, 0, 0, 0);
+		len = textlen(app->page_text);
+		test = len;
 
 		while (test >= 0)
 		{
 			matchlen = match(app->search, app->page_text, test);
 			if (matchlen)
 			{
-				app->hit = test;
-				app->hitlen = matchlen;
 				wincursor(app, HAND);
 				winrepaint(app);
 				return;
 			}
 			test--;
 		}
-
-		app->pageno--;
-		if (app->pageno < 1)
-			app->pageno = app->pagecount;
-
-		pdfapp_showpage(app, 1, 0, 0, 0);
-		*panto = PAN_TO_BOTTOM;
-
 	} while (app->pageno != startpage);
-
-	if (app->pageno == startpage)
-		pdfapp_warn(app, "String '%s' not found.", app->search);
 
 	winrepaint(app);
 	wincursor(app, HAND);
+}
+
+static void pdfapp_find_hits(pdfapp_t *app)
+{
+	int matchlen;
+	int test;
+	int len;
+
+	app->hits.cnt = 0;
+	
+	if (app->search[0] == '\0')
+		return;
+
+	len = textlen(app->page_text);
+	test = 0;
+	
+	while (test < len)
+	{
+		matchlen = match(app->search, app->page_text, test);
+		if (matchlen)
+		{
+			if (app->hits.cnt == app->hits.cap)
+			{
+				app->hits.cap *= 2;
+				app->hits.h = fz_resize_array(app->ctx, app->hits.h, app->hits.cap, sizeof(*app->hits.h));
+			}
+			app->hits.h[app->hits.cnt].i = test;
+			app->hits.h[app->hits.cnt].len = matchlen;
+			app->hits.cnt++;
+			test += matchlen - 1;
+		}
+		test++;
+	}
 }
 
 void pdfapp_onresize(pdfapp_t *app, int w, int h)
@@ -989,36 +1004,33 @@ void pdfapp_onkey(pdfapp_t *app, int c)
 		int n = strlen(app->search);
 		if (c < ' ')
 		{
-			if (c == '\b' && n > 0)
+			if (c == '\033' || (c == '\b' && n == 0))
 			{
-				app->search[n - 1] = 0;
+				app->search[0] = '\0';
+				app->isediting = 0;
+				winrepaint(app);
+			}
+			else if (c == '\b')
+			{
+				app->search[n - 1] = '\0';
 				winrepaintsearch(app);
 			}
-			if (c == '\n' || c == '\r')
+			else if (c == '\n' || c == '\r')
 			{
 				app->isediting = 0;
-				if (n > 0)
+				pdfapp_find_hits(app);
+				if (app->hits.cnt == 0)
 				{
-					winrepaintsearch(app);
-
 					if (app->searchdir < 0)
-					{
-						if (app->pageno == 1)
-							app->pageno = app->pagecount;
-						else
-							app->pageno--;
-						pdfapp_showpage(app, 1, 1, 0, 0);
-					}
+						pdfapp_searchbackward(app, DONT_PAN);
+					else
+						pdfapp_searchforward(app, DONT_PAN);
 
-					pdfapp_onkey(app, 'n');
+					if (app->hits.cnt > 0)
+						pdfapp_showpage(app, 0, 1, 1, 0);
 				}
 				else
 					winrepaint(app);
-			}
-			if (c == '\033')
-			{
-				app->isediting = 0;
-				winrepaint(app);
 			}
 		}
 		else
@@ -1280,8 +1292,7 @@ void pdfapp_onkey(pdfapp_t *app, int c)
 		app->isediting = 1;
 		app->searchdir = -1;
 		app->search[0] = 0;
-		app->hit = -1;
-		app->hitlen = 0;
+		app->hits.cnt = 0;
 		winrepaintsearch(app);
 		break;
 
@@ -1289,8 +1300,7 @@ void pdfapp_onkey(pdfapp_t *app, int c)
 		app->isediting = 1;
 		app->searchdir = 1;
 		app->search[0] = 0;
-		app->hit = -1;
-		app->hitlen = 0;
+		app->hits.cnt = 0;
 		winrepaintsearch(app);
 		break;
 
