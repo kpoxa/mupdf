@@ -8,12 +8,16 @@
 static pdf_document *doc = NULL;
 static fz_context *ctx = NULL;
 static int dorgb = 0;
+static int fonts_only = 0;
+static int images_only = 0;
 
 static void usage(void)
 {
 	fprintf(stderr, "usage: mutool extract [options] file.pdf [object numbers]\n");
 	fprintf(stderr, "\t-p\tpassword\n");
 	fprintf(stderr, "\t-r\tconvert images to rgb\n");
+	fprintf(stderr, "\t-f\textract only fonts\n");
+	fprintf(stderr, "\t-i\textract only images\n");
 	exit(1);
 }
 
@@ -137,9 +141,9 @@ static void showobject(int num)
 
 	obj = pdf_load_object(doc, num, 0);
 
-	if (isimage(obj))
+	if (isimage(obj) && !fonts_only)
 		saveimage(num);
-	else if (isfontdesc(obj))
+	else if (isfontdesc(obj) && !images_only)
 		savefont(obj, num);
 
 	pdf_drop_obj(obj);
@@ -151,12 +155,14 @@ int pdfextract_main(int argc, char **argv)
 	char *password = "";
 	int c, o;
 
-	while ((c = fz_getopt(argc, argv, "p:r")) != -1)
+	while ((c = fz_getopt(argc, argv, "p:rfi")) != -1)
 	{
 		switch (c)
 		{
 		case 'p': password = fz_optarg; break;
 		case 'r': dorgb++; break;
+		case 'f': fonts_only = 1; break;
+		case 'i': images_only = 1; break;
 		default: usage(); break;
 		}
 	}
